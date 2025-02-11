@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
     <title>红色方块消除蓝色方块游戏</title>
     <style>
         :root {
@@ -19,7 +19,7 @@
         .canvas {
             display: flex;
             flex-wrap: wrap;
-            width: 504px;
+            width: calc(var(--n) * 41px);
             position: relative;
         }
         @media (max-width: 768px) { /* 移动端适配 */
@@ -104,7 +104,8 @@
     <div class="overlay" id="overlay">
         <p id="message"></p>
         <div class="button-container">
-            <button onclick="restartGame()">重新开始</button>
+            <button onclick="replayGame()">重新挑战</button>
+            <button onclick="newGame()">再来一局</button>
         </div>
     </div>
 </div>
@@ -116,7 +117,8 @@
     <input type="number" id="cols" value="12">
     <label for="blockCount">方块数：</label>
     <input type="number" id="blockCount" value="8">
-    <button onclick="startNewGame()">开始游戏</button>
+    <button onclick="newGame()">新游戏</button>
+    <button onclick="replayGame()">重新开始</button>
 <!--    <button onclick="toggleHint()">💡提示</button>-->
 </div>
 
@@ -126,25 +128,33 @@
     const message = document.getElementById('message');
     const overlay = document.getElementById('overlay');
     const overlayContainer = document.getElementById('overlay-container');
-    let grid, remainingRed, redPositions, redNumbers, hintActive = false;
+    let grid, remainingRed, redPositions, bluePositions, redNumbers, hintActive = false;
 
-    function initializeGame() {
-        rows = parseInt(document.getElementById('rows').value);
-        cols = parseInt(document.getElementById('cols').value);
-        blockCount = parseInt(document.getElementById('blockCount').value);
-
+    function initializeGame(reset = true) {
+        overlay.style.display = 'none';
+        overlayContainer.style.display = 'none';
         hintActive = false;
+
+        if (reset) {
+            rows = parseInt(document.getElementById('rows').value);
+            cols = parseInt(document.getElementById('cols').value);
+            blockCount = parseInt(document.getElementById('blockCount').value);
+        }
 
         grid = Array.from({ length: rows }, () => Array(cols).fill(null));
         remainingRed = blockCount;
-        let bluePositions = getConnectedCenterPositions(blockCount);
+        if (reset) {
+            bluePositions = getConnectedCenterPositions(blockCount);
+        }
         bluePositions.forEach(({ x, y }) => grid[y][x] = 'blue');
-        redPositions = getValidRedPositions(bluePositions);
+        if (reset) {
+            redPositions = getValidRedPositions(bluePositions);
+        }
         redNumbers = Array.from({ length: blockCount }, (_, i) => i + 1);
         redPositions.forEach(pos => grid[pos.y][pos.x] = 'red');
         drawGrid();
-        overlayContainer.style.display = 'none';
         document.documentElement.style.setProperty('--n', cols);
+        // canvas.style.width = `${cols * 41}px`;
     }
 
     function getConnectedCenterPositions(count) {
@@ -263,13 +273,12 @@
         }
     }
 
-    function restartGame() {
-        overlay.style.display = 'none';
+    function newGame() {
         initializeGame();
     }
 
-    function startNewGame() {
-        initializeGame();
+    function replayGame() {
+        initializeGame(false);
     }
 
     function toggleHint() {
