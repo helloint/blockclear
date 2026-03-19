@@ -56,18 +56,32 @@
             color: white;
             font-weight: bold;
         }
+        .moving-red {
+            background-color: red;
+        }
 
         .overlay {
             position: absolute;
-            top: 50%;
+            top: 40%;
             left: 50%;
             transform: translate(-50%, -50%);
             background: white;
             border: 2px solid black;
-            padding: 20px;
+            padding: 20px 24px;
             display: none;
             text-align: center;
             z-index: 10;
+            min-width: 220px;
+        }
+        .overlay-close {
+            position: absolute;
+            top: 6px;
+            right: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            border: none;
+            background: transparent;
+            font-size: 16px;
         }
         .button-container {
             margin-top: 10px;
@@ -84,14 +98,19 @@
             justify-content: center;
             z-index: 5;
         }
-        .control-panel {
-            margin-top: 20px;
+        .top-panel {
+            margin-top: 0;
+            margin-bottom: 10px;
             text-align: center;
         }
-        .control-panel input {
+        .top-panel input {
             width: 30px;
             margin: 5px;
             padding: 5px;
+        }
+        .bottom-panel {
+            margin-top: 10px;
+            text-align: center;
         }
         .path {
             margin-top: 10px;
@@ -99,27 +118,31 @@
     </style>
 </head>
 <body>
-<div class="canvas" id="canvas"></div>
-<div class="overlay-container" id="overlay-container">
-    <div class="overlay" id="overlay">
-        <p id="message"></p>
-        <div class="button-container">
-            <button onclick="newGame()">再来一局</button>
-            <button onclick="replayGame()">重新挑战</button>
-        </div>
-    </div>
-</div>
-
-<div class="control-panel">
+<div class="top-panel">
     <label for="rows">行数：</label>
     <input type="number" id="rows" value="8">
     <label for="cols">列数：</label>
     <input type="number" id="cols" value="8">
     <label for="blockCount">方块数：</label>
     <input type="number" id="blockCount" value="8">
+</div>
+
+<div class="canvas" id="canvas"></div>
+<div class="overlay-container" id="overlay-container">
+    <div class="overlay" id="overlay">
+        <button class="overlay-close" onclick="closeOverlay()">×</button>
+        <p id="message"></p>
+        <div class="button-container">
+            <button id="btn-primary" onclick="newGame()">新游戏</button>
+            <button id="btn-secondary" onclick="replayGame()">重新开始</button>
+        </div>
+    </div>
+</div>
+
+<div class="bottom-panel">
     <button onclick="newGame()">新游戏</button>
     <button onclick="replayGame()">重新开始</button>
-<!--    <button onclick="toggleHint()">💡提示</button>-->
+    <button onclick="toggleHint()">💡提示</button>
 </div>
 
 <script>
@@ -128,12 +151,25 @@
     const message = document.getElementById('message');
     const overlay = document.getElementById('overlay');
     const overlayContainer = document.getElementById('overlay-container');
+
     let grid, remainingRed, redPositions, bluePositions, redNumbers, hintActive = false;
+    let hintOffset = 0;          // 已经消耗的红块数量
+    let currentHintOrder = null; // 当前局面的可行解（红块顺序）
+    let activeMoves = 0;        // 当前同时在移动的红块数量
+    let luckMode = false;       // “继续尝试”：关闭提前失败弹层后继续游戏且不再重复提示
+    let failurePromptShown = false; // 提前失败弹层是否已经显示过（用于避免重复弹出）
+    let overlayState = null;    // 当前弹层类型：success / failFinal / failPredict
 
     function initializeGame(reset = true) {
         overlay.style.display = 'none';
         overlayContainer.style.display = 'none';
         hintActive = false;
+        currentHintOrder = null;
+        hintOffset = 0;
+        activeMoves = 0;
+        luckMode = false;
+        failurePromptShown = false;
+        overlayState = null;
 
         if (reset) {
             rows = parseInt(document.getElementById('rows').value);
@@ -143,18 +179,20 @@
 
         grid = Array.from({ length: rows }, () => Array(cols).fill(null));
         remainingRed = blockCount;
+
         if (reset) {
             bluePositions = getConnectedCenterPositions(blockCount);
         }
         bluePositions.forEach(({ x, y }) => grid[y][x] = 'blue');
+
         if (reset) {
             redPositions = getValidRedPositions(bluePositions);
         }
         redNumbers = Array.from({ length: blockCount }, (_, i) => i + 1);
         redPositions.forEach(pos => grid[pos.y][pos.x] = 'red');
+
         drawGrid();
         document.documentElement.style.setProperty('--n', cols);
-        // canvas.style.width = `${cols * 41}px`;
     }
 
     function getConnectedCenterPositions(count) {
@@ -179,12 +217,7 @@
         return positions;
     }
 
-    /**
-     * 核心算法，确保红色方块消除路径存在，游戏可以成功完成。
-     * FIXME: 现在显示的顺序并不总是正确的，但游戏似乎仍然存在其他可以完成的路径。
-     * @param bluePositions
-     * @returns {*[]}
-     */
+    // 保留你原来的红块生成方式
     function getValidRedPositions(bluePositions) {
         let redPositions;
         let availableBlues = [...bluePositions];
@@ -203,21 +236,29 @@
                 }
             }
             count = count + 1;
-        } while (redPositions.length < availableBlues.length && count < maxRetry)
+        } while (redPositions.length < availableBlues.length && count < maxRetry);
 
         return redPositions;
     }
 
     function drawGrid() {
         canvas.innerHTML = '';
+
+        // 如果正在显示提示，每次重绘前按当前局面重新求解一条路径
+        if (hintActive) {
+            currentHintOrder = findSolutionForCurrentGrid();
+        } else {
+            currentHintOrder = null;
+        }
+
         for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
                 let cell = document.createElement('div');
                 cell.classList.add('cell');
 
-                // 判断是否是画布四边上的方格
+                // 画布四边
                 if (x === 0 || y === 0 || x === cols - 1 || y === rows - 1) {
-                    cell.classList.add('cell-edge');  // 添加浅灰色背景
+                    cell.classList.add('cell-edge');
                 }
 
                 if (grid[y][x] === 'blue') {
@@ -225,10 +266,12 @@
                 }
                 if (grid[y][x] === 'red') {
                     cell.classList.add('red');
-                    if (hintActive) {
-                        let index = redPositions.findIndex(pos => pos.x === x && pos.y === y);
-                        cell.textContent = redNumbers[index];
-                        cell.classList.add('red-with-number');
+                    if (hintActive && currentHintOrder) {
+                        const idx = currentHintOrder.findIndex(pos => pos.x === x && pos.y === y);
+                        if (idx !== -1) {
+                            cell.textContent = hintOffset + idx + 1;
+                            cell.classList.add('red-with-number');
+                        }
                     }
                     cell.addEventListener('click', () => removeClosestBlue(x, y));
                 }
@@ -238,11 +281,11 @@
         }
     }
 
-    function removeClosestBlue(x, y) {
+    function findClosestBlueInGrid(x, y, g) {
         let closest = null, minDistance = Infinity;
         for (let j = 0; j < rows; j++) {
             for (let i = 0; i < cols; i++) {
-                if (grid[j][i] === 'blue' && (i === x || j === y)) {
+                if (g[j][i] === 'blue' && (i === x || j === y)) {
                     let distance = Math.abs(i - x) + Math.abs(j - y);
                     if (distance < minDistance) {
                         minDistance = distance;
@@ -251,23 +294,221 @@
                 }
             }
         }
-        if (closest) {
-            grid[closest.y][closest.x] = null;
+        return closest;
+    }
+
+    function removeClosestBlue(x, y) {
+        // 只允许点击边缘红块
+        const isEdge =
+            x === 0 || x === cols - 1 ||
+            y === 0 || y === rows - 1;
+        if (!isEdge) return;
+
+        // 计算移动方向（从边缘向内）
+        let dx = 0, dy = 0;
+        if (x === 0) dx = 1;
+        else if (x === cols - 1) dx = -1;
+        else if (y === 0) dy = 1;
+        else if (y === rows - 1) dy = -1;
+
+        const path = [];
+        let cx = x;
+        let cy = y;
+        let hitBlue = null;
+
+        while (true) {
+            cx += dx;
+            cy += dy;
+            if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) break;
+
+            // 先判断是否撞到蓝块
+            if (grid[cy][cx] === 'blue') {
+                path.push({ x: cx, y: cy });
+                hitBlue = { x: cx, y: cy };
+                break;
+            }
+
+            // 没有蓝块，若已经到达对侧灰色边缘，则停止，不把灰色格纳入路径
+            const isEdgeCell =
+                cx === 0 || cx === cols - 1 ||
+                cy === 0 || cy === rows - 1;
+            if (isEdgeCell) {
+                break;
+            }
+
+            path.push({ x: cx, y: cy });
         }
+
+        if (path.length === 0) return;
+
+        // 计算当前红块在提示序列中的编号（如果有的话）
+        let moveLabel = null;
+        if (hintActive && currentHintOrder) {
+            const idx = currentHintOrder.findIndex(pos => pos.x === x && pos.y === y);
+            if (idx !== -1) {
+                moveLabel = hintOffset + idx + 1;
+            }
+        }
+
+        // 当前红块开始移动：增加活动数量
+        activeMoves++;
+
+        // 立即从棋盘中移除边缘红块（它开始移动了）
         grid[y][x] = null;
         remainingRed--;
-        checkGameStatus();
-        drawGrid();
+        hintOffset = blockCount - remainingRed;
+
+        // 把起始格上的样式和数字去掉，让视觉上边缘红块立刻消失，
+        // 数字跟随后面的移动红块显示
+        const startIndex = y * cols + x;
+        const startCell = canvas.children[startIndex];
+        if (startCell) {
+            startCell.classList.remove('red');
+            startCell.classList.remove('moving-red');
+            startCell.textContent = '';
+            startCell.classList.remove('red-with-number');
+        }
+
+        // 动画最后一帧再同时移除蓝块，并在所有移动都结束后统一判断胜负/重绘
+        animateRedMove(path, moveLabel, () => {
+            if (hitBlue) {
+                grid[hitBlue.y][hitBlue.x] = null;
+                // 只更新被撞到的蓝块格子，避免 drawGrid 打断其它正在移动的动画
+                const hitIndex = hitBlue.y * cols + hitBlue.x;
+                const hitCell = canvas.children[hitIndex];
+                if (hitCell) {
+                    hitCell.classList.remove('blue');
+                    hitCell.textContent = '';
+                }
+            }
+
+            activeMoves--;
+            if (activeMoves === 0) {
+                checkGameStatus();
+                drawGrid();
+            }
+        });
+    }
+
+    // 0.3 秒 / 格 的步进动画，使用 .moving-red 高亮路径格；在有提示时数字跟随红块移动
+    function animateRedMove(path, moveLabel, onComplete) {
+        const cells = canvas.children;
+        let prevIndex = null;
+
+        path.forEach((pos, idx) => {
+            setTimeout(() => {
+                if (prevIndex !== null && cells[prevIndex]) {
+                    cells[prevIndex].classList.remove('moving-red');
+                    if (moveLabel != null) {
+                        cells[prevIndex].textContent = '';
+                        cells[prevIndex].classList.remove('red-with-number');
+                    }
+                }
+                const currentIndex = pos.y * cols + pos.x;
+                const cell = cells[currentIndex];
+                if (cell) {
+                    cell.classList.add('moving-red');
+                    if (moveLabel != null) {
+                        cell.textContent = moveLabel;
+                        cell.classList.add('red-with-number');
+                    }
+                }
+                prevIndex = currentIndex;
+
+                if (idx === path.length - 1) {
+                    setTimeout(() => {
+                        if (prevIndex !== null && cells[prevIndex]) {
+                            cells[prevIndex].classList.remove('moving-red');
+                            if (moveLabel != null) {
+                                cells[prevIndex].textContent = '';
+                                cells[prevIndex].classList.remove('red-with-number');
+                            }
+                        }
+                        if (typeof onComplete === 'function') {
+                            onComplete();
+                        }
+                    }, 50);
+                }
+            }, idx * 300); // 每格 0.3 秒
+        });
     }
 
     function checkGameStatus() {
         let remainingBlue = grid.flat().filter(cell => cell === 'blue').length;
+
+        // 成功：没有蓝块
         if (remainingBlue === 0) {
             message.textContent = '🏅游戏成功！';
+            overlayState = 'success';
+            luckMode = false;
+            failurePromptShown = false;
+            document.getElementById('btn-primary').textContent = '新游戏';
+            document.getElementById('btn-primary').onclick = newGame;
+            document.getElementById('btn-secondary').textContent = '重新开始';
+            document.getElementById('btn-secondary').onclick = replayGame;
             overlay.style.display = 'block';
             overlayContainer.style.display = 'flex';
-        } else if (remainingRed === 0) {
+            return;
+        }
+
+        // 失败 1：没有红块了
+        if (remainingRed === 0) {
             message.textContent = '🙅游戏失败！';
+            overlayState = 'failFinal';
+            luckMode = false;
+            failurePromptShown = false;
+            document.getElementById('btn-primary').textContent = '新游戏';
+            document.getElementById('btn-primary').onclick = newGame;
+            document.getElementById('btn-secondary').textContent = '重新开始';
+            document.getElementById('btn-secondary').onclick = replayGame;
+            overlay.style.display = 'block';
+            overlayContainer.style.display = 'flex';
+            return;
+        }
+
+        // 如果已经进入“继续尝试”，则只等红块用完时给出最终失败提示
+        if (luckMode) return;
+
+        // 如果提前失败弹层已经显示过，则不再重复计算和弹出
+        if (failurePromptShown) return;
+
+        // 失败 2（快速剪枝）：没有任意一对红蓝在同一行或同一列，必然无解
+        const reds = getRedPositionsFromGrid(grid);
+        const blues = getBluePositionsFromGrid(grid);
+        let hasSameLinePair = false;
+        outer:
+        for (const r of reds) {
+            for (const b of blues) {
+                if (r.x === b.x || r.y === b.y) {
+                    hasSameLinePair = true;
+                    break outer;
+                }
+            }
+        }
+        if (!hasSameLinePair) {
+            message.textContent = '🙅游戏失败！已无消除方案';
+            overlayState = 'failPredict';
+            failurePromptShown = true;
+            // 提前失败弹层按钮：重新开始 / 继续尝试
+            document.getElementById('btn-primary').textContent = '重新开始';
+            document.getElementById('btn-primary').onclick = replayGame;
+            document.getElementById('btn-secondary').textContent = '继续尝试';
+            document.getElementById('btn-secondary').onclick = luckContinue;
+            overlay.style.display = 'block';
+            overlayContainer.style.display = 'flex';
+            return;
+        }
+
+        // 失败 3：DFS 严格模拟后确认无解
+        const possible = findSolutionForCurrentGrid();
+        if (!possible || possible.length === 0) {
+            message.textContent = '🙅游戏失败！已无消除方案';
+            overlayState = 'failPredict';
+            failurePromptShown = true;
+            document.getElementById('btn-primary').textContent = '重新开始';
+            document.getElementById('btn-primary').onclick = replayGame;
+            document.getElementById('btn-secondary').textContent = '继续尝试';
+            document.getElementById('btn-secondary').onclick = luckContinue;
             overlay.style.display = 'block';
             overlayContainer.style.display = 'flex';
         }
@@ -281,9 +522,162 @@
         initializeGame(false);
     }
 
+    function closeOverlay() {
+        // 关闭提前失败弹层时，等同于“继续尝试”
+        if (overlayState === 'failPredict') {
+            luckMode = true;
+            failurePromptShown = true;
+        }
+        overlay.style.display = 'none';
+        overlayContainer.style.display = 'none';
+        overlayState = null;
+    }
+
+    function luckContinue() {
+        // 关闭提前失败弹层并继续游戏，不再中途重复失败提示
+        if (overlayState === 'failPredict') {
+            luckMode = true;
+            failurePromptShown = true;
+        }
+        closeOverlay();
+    }
+
+    // 开关提示：打开时从当前局面计算一条可行解
     function toggleHint() {
         hintActive = !hintActive;
+        if (hintActive) {
+            hintOffset = blockCount - remainingRed;
+            currentHintOrder = findSolutionForCurrentGrid();
+        } else {
+            currentHintOrder = null;
+        }
         drawGrid();
+    }
+
+    // ---------- 求解器：从当前局面找一条可行路径（与实际移动规则完全一致） ----------
+
+    function cloneGrid(src) {
+        return src.map(row => row.slice());
+    }
+
+    function getRedPositionsFromGrid(g) {
+        const reds = [];
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (g[y][x] === 'red') {
+                    reds.push({ x, y });
+                }
+            }
+        }
+        return reds;
+    }
+
+    function getBluePositionsFromGrid(g) {
+        const blues = [];
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                if (g[y][x] === 'blue') {
+                    blues.push({ x, y });
+                }
+            }
+        }
+        return blues;
+    }
+
+    function encodeState(g) {
+        const reds = getRedPositionsFromGrid(g)
+            .map(p => `${p.x},${p.y}`)
+            .sort()
+            .join('|');
+        const blues = getBluePositionsFromGrid(g)
+            .map(p => `${p.x},${p.y}`)
+            .sort()
+            .join('|');
+        return `R:${reds};B:${blues}`;
+    }
+
+    // 在给定棋盘上模拟一次红块点击，返回新的棋盘
+    function simulateMoveOnGrid(curGrid, r) {
+        const { x, y } = r;
+
+        // 只能点击边缘红块
+        const isEdge =
+            x === 0 || x === cols - 1 ||
+            y === 0 || y === rows - 1;
+        if (!isEdge) return null;
+
+        // 计算移动方向（从边缘向内）
+        let dx = 0, dy = 0;
+        if (x === 0) dx = 1;
+        else if (x === cols - 1) dx = -1;
+        else if (y === 0) dy = 1;
+        else if (y === rows - 1) dy = -1;
+
+        let cx = x;
+        let cy = y;
+        let hitBlue = null;
+
+        while (true) {
+            cx += dx;
+            cy += dy;
+            if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) break;
+
+            // 先判断是否撞到蓝块
+            if (curGrid[cy][cx] === 'blue') {
+                hitBlue = { x: cx, y: cy };
+                break;
+            }
+
+            // 没有蓝块，若已经到达对侧灰色边缘，则停止
+            const isEdgeCell =
+                cx === 0 || cx === cols - 1 ||
+                cy === 0 || cy === rows - 1;
+            if (isEdgeCell) {
+                break;
+            }
+        }
+
+        // 红块原地就直接消失（无路径或路径长度为 0）
+        const nextGrid = cloneGrid(curGrid);
+        nextGrid[y][x] = null;
+
+        if (hitBlue) {
+            nextGrid[hitBlue.y][hitBlue.x] = null;
+        }
+
+        return nextGrid;
+    }
+
+    // DFS + 记忆化：返回一个红块点击顺序（如果存在解），使用与实际游戏相同的移动规则
+    function findSolutionForCurrentGrid() {
+        const startGrid = cloneGrid(grid);
+        const visited = new Set();
+
+        function dfs(curGrid, sequence) {
+            const key = encodeState(curGrid);
+            if (visited.has(key)) return null;
+            visited.add(key);
+
+            const blues = getBluePositionsFromGrid(curGrid);
+            if (blues.length === 0) {
+                return sequence;
+            }
+
+            const reds = getRedPositionsFromGrid(curGrid);
+            if (reds.length === 0) return null;
+
+            for (const r of reds) {
+                const nextGrid = simulateMoveOnGrid(curGrid, r);
+                if (!nextGrid) continue;
+
+                const res = dfs(nextGrid, sequence.concat({ x: r.x, y: r.y }));
+                if (res) return res;
+            }
+
+            return null;
+        }
+
+        return dfs(startGrid, []);
     }
 
     initializeGame();
