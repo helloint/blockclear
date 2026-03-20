@@ -85,6 +85,10 @@
         }
         .button-container {
             margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
         }
         .overlay-container {
             position: absolute;
@@ -111,9 +115,32 @@
         .bottom-panel {
             margin-top: 10px;
             text-align: center;
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            width: 100%;
+            padding: 0 12px;
+            box-sizing: border-box;
+        }
+        .bottom-panel button,
+        .button-container button {
+            padding: 10px 16px;
+            font-size: 16px;
+            min-width: 110px;
+            border-radius: 6px;
         }
         .path {
             margin-top: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .bottom-panel button,
+            .button-container button {
+                padding: 14px 18px;
+                font-size: 18px;
+                min-width: 140px;
+            }
         }
     </style>
 </head>
@@ -429,7 +456,7 @@
                         }
                     }, 50);
                 }
-            }, idx * 300); // 每格 0.3 秒
+            }, idx * 150); // 每格 0.15 秒（加快 1 倍）
         });
     }
 
