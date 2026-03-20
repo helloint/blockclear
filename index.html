@@ -51,13 +51,23 @@
         }
 
         .blue { background-color: blue; }
-        .red { background-color: red; cursor: pointer; }
+        @keyframes redColorPulse {
+            0% { background-color: #ff2a2a; }
+            50% { background-color: #c40000; }
+            100% { background-color: #ff2a2a; }
+        }
+
+        .red {
+            background-color: #ff2a2a;
+            cursor: pointer;
+        }
         .red-with-number {
             color: white;
             font-weight: bold;
         }
         .moving-red {
-            background-color: red;
+            background-color: #ff2a2a;
+            animation: redColorPulse 0.8s ease-in-out infinite;
         }
 
         .overlay {
@@ -142,6 +152,12 @@
                 min-width: 140px;
             }
         }
+
+        @media (prefers-reduced-motion: reduce) {
+            .moving-red {
+                animation: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -183,6 +199,7 @@
     let hintOffset = 0;          // 已经消耗的红块数量
     let currentHintOrder = null; // 当前局面的可行解（红块顺序）
     let activeMoves = 0;        // 当前同时在移动的红块数量
+    let moveAnimSeq = 0;       // 每次移动动画的自增 token（避免并发残影互相干扰）
     let luckMode = false;       // “继续尝试”：关闭提前失败弹层后继续游戏且不再重复提示
     let failurePromptShown = false; // 提前失败弹层是否已经显示过（用于避免重复弹出）
     let overlayState = null;    // 当前弹层类型：success / failFinal / failPredict
@@ -417,46 +434,48 @@
         });
     }
 
-    // 0.3 秒 / 格 的步进动画，使用 .moving-red 高亮路径格；在有提示时数字跟随红块移动
+    // 普通步进动画：下一步点亮时，立刻清除上一格
     function animateRedMove(path, moveLabel, onComplete) {
         const cells = canvas.children;
+        const stepMs = 150; // 每格延迟（与 setTimeout 保持一致）
+
+        const animToken = ++moveAnimSeq;
         let prevIndex = null;
 
         path.forEach((pos, idx) => {
             setTimeout(() => {
+                // 先清除上一格，避免残影
                 if (prevIndex !== null && cells[prevIndex]) {
-                    cells[prevIndex].classList.remove('moving-red');
-                    if (moveLabel != null) {
-                        cells[prevIndex].textContent = '';
-                        cells[prevIndex].classList.remove('red-with-number');
+                    const prevCell = cells[prevIndex];
+                    if (prevCell.dataset.movingRedAnim === String(animToken)) {
+                        prevCell.classList.remove('moving-red');
+                        if (moveLabel != null) {
+                            prevCell.textContent = '';
+                            prevCell.classList.remove('red-with-number');
+                        }
+                        delete prevCell.dataset.movingRedAnim;
                     }
                 }
+
                 const currentIndex = pos.y * cols + pos.x;
                 const cell = cells[currentIndex];
-                if (cell) {
-                    cell.classList.add('moving-red');
-                    if (moveLabel != null) {
-                        cell.textContent = moveLabel;
-                        cell.classList.add('red-with-number');
-                    }
+                if (!cell) return;
+
+                // 标记本次动画对当前格的“占用”，避免并发移动互相清理
+                cell.dataset.movingRedAnim = String(animToken);
+                cell.classList.add('moving-red');
+                if (moveLabel != null) {
+                    cell.textContent = moveLabel;
+                    cell.classList.add('red-with-number');
                 }
+
                 prevIndex = currentIndex;
 
-                if (idx === path.length - 1) {
-                    setTimeout(() => {
-                        if (prevIndex !== null && cells[prevIndex]) {
-                            cells[prevIndex].classList.remove('moving-red');
-                            if (moveLabel != null) {
-                                cells[prevIndex].textContent = '';
-                                cells[prevIndex].classList.remove('red-with-number');
-                            }
-                        }
-                        if (typeof onComplete === 'function') {
-                            onComplete();
-                        }
-                    }, 50);
+                // 最后一格：触发业务回调（蓝块/胜负等）
+                if (idx === path.length - 1 && typeof onComplete === 'function') {
+                    setTimeout(onComplete, 50);
                 }
-            }, idx * 150); // 每格 0.15 秒（加快 1 倍）
+            }, idx * stepMs);
         });
     }
 
@@ -469,6 +488,7 @@
             overlayState = 'success';
             luckMode = false;
             failurePromptShown = false;
+            document.getElementById('btn-secondary').style.display = '';
             document.getElementById('btn-primary').textContent = '新游戏';
             document.getElementById('btn-primary').onclick = newGame;
             document.getElementById('btn-secondary').textContent = '重新开始';
@@ -484,6 +504,7 @@
             overlayState = 'failFinal';
             luckMode = false;
             failurePromptShown = false;
+            document.getElementById('btn-secondary').style.display = '';
             document.getElementById('btn-primary').textContent = '新游戏';
             document.getElementById('btn-primary').onclick = newGame;
             document.getElementById('btn-secondary').textContent = '重新开始';
@@ -517,6 +538,7 @@
             overlayState = 'failPredict';
             failurePromptShown = true;
             // 提前失败弹层按钮：重新开始 / 继续尝试
+            document.getElementById('btn-secondary').style.display = '';
             document.getElementById('btn-primary').textContent = '重新开始';
             document.getElementById('btn-primary').onclick = replayGame;
             document.getElementById('btn-secondary').textContent = '继续尝试';
@@ -532,6 +554,7 @@
             message.textContent = '🙅游戏失败！已无消除方案';
             overlayState = 'failPredict';
             failurePromptShown = true;
+            document.getElementById('btn-secondary').style.display = '';
             document.getElementById('btn-primary').textContent = '重新开始';
             document.getElementById('btn-primary').onclick = replayGame;
             document.getElementById('btn-secondary').textContent = '继续尝试';
@@ -549,12 +572,34 @@
         initializeGame(false);
     }
 
+    function setCookie(name, value, days) {
+        const maxAge = days * 24 * 60 * 60;
+        document.cookie = `${name}=${encodeURIComponent(value)}; max-age=${maxAge}; path=/; SameSite=Lax`;
+    }
+
+    function getCookie(name) {
+        const cookies = document.cookie.split(';').map(s => s.trim()).filter(Boolean);
+        const prefix = name + '=';
+        for (const c of cookies) {
+            if (c.startsWith(prefix)) {
+                return decodeURIComponent(c.substring(prefix.length));
+            }
+        }
+        return null;
+    }
+
+    const WELCOME_COOKIE = 'blockclear_welcome_seen';
+
     function closeOverlay() {
         // 关闭提前失败弹层时，等同于“继续尝试”
         if (overlayState === 'failPredict') {
             luckMode = true;
             failurePromptShown = true;
+        } else if (overlayState === 'welcome') {
+            // 第一次访问说明弹层关闭后，写 cookie 不再提示
+            setCookie(WELCOME_COOKIE, '1', 365);
         }
+
         overlay.style.display = 'none';
         overlayContainer.style.display = 'none';
         overlayState = null;
@@ -567,6 +612,25 @@
             failurePromptShown = true;
         }
         closeOverlay();
+    }
+
+    function showWelcomeIfFirstVisit() {
+        // 仅首次访问显示说明（cookie 记录）
+        if (getCookie(WELCOME_COOKIE) === '1') return;
+
+        overlayState = 'welcome';
+        luckMode = false;
+        failurePromptShown = false;
+
+        message.textContent = '用红色块消灭所有蓝色块';
+
+        // 欢迎弹层只保留一个主按钮用于关闭
+        document.getElementById('btn-secondary').style.display = 'none';
+        document.getElementById('btn-primary').textContent = '开始游戏';
+        document.getElementById('btn-primary').onclick = closeOverlay;
+
+        overlay.style.display = 'block';
+        overlayContainer.style.display = 'flex';
     }
 
     // 开关提示：打开时从当前局面计算一条可行解
@@ -708,6 +772,7 @@
     }
 
     initializeGame();
+    showWelcomeIfFirstVisit();
 </script>
 </body>
 </html>
