@@ -219,6 +219,7 @@
             rows = parseInt(document.getElementById('rows').value);
             cols = parseInt(document.getElementById('cols').value);
             blockCount = parseInt(document.getElementById('blockCount').value);
+            saveConfigToCookie();
         }
 
         grid = Array.from({ length: rows }, () => Array(cols).fill(null));
@@ -317,7 +318,7 @@
                             cell.classList.add('red-with-number');
                         }
                     }
-                    cell.addEventListener('click', () => removeClosestBlue(x, y));
+                    cell.addEventListener('click', () => removeClosestBlue(x, y), { once: true });
                 }
 
                 canvas.appendChild(cell);
@@ -347,6 +348,11 @@
             x === 0 || x === cols - 1 ||
             y === 0 || y === rows - 1;
         if (!isEdge) return;
+
+        // 关键保护：必须是“当前仍存在的红块”才能触发移动
+        // 防止快速连点同一位置或空边缘格导致重复扣减/伪移动
+        if (grid[y][x] !== 'red') return;
+        if (remainingRed <= 0) return;
 
         // 计算移动方向（从边缘向内）
         let dx = 0, dy = 0;
@@ -589,6 +595,25 @@
     }
 
     const WELCOME_COOKIE = 'blockclear_welcome_seen';
+    const ROWS_COOKIE = 'blockclear_rows';
+    const COLS_COOKIE = 'blockclear_cols';
+    const BLOCK_COUNT_COOKIE = 'blockclear_block_count';
+
+    function saveConfigToCookie() {
+        setCookie(ROWS_COOKIE, document.getElementById('rows').value, 365);
+        setCookie(COLS_COOKIE, document.getElementById('cols').value, 365);
+        setCookie(BLOCK_COUNT_COOKIE, document.getElementById('blockCount').value, 365);
+    }
+
+    function loadConfigFromCookie() {
+        const savedRows = getCookie(ROWS_COOKIE);
+        const savedCols = getCookie(COLS_COOKIE);
+        const savedBlockCount = getCookie(BLOCK_COUNT_COOKIE);
+
+        if (savedRows) document.getElementById('rows').value = savedRows;
+        if (savedCols) document.getElementById('cols').value = savedCols;
+        if (savedBlockCount) document.getElementById('blockCount').value = savedBlockCount;
+    }
 
     function closeOverlay() {
         // 关闭提前失败弹层时，等同于“继续尝试”
@@ -631,6 +656,16 @@
 
         overlay.style.display = 'block';
         overlayContainer.style.display = 'flex';
+    }
+
+    function setupConfigPersistence() {
+        const rowsInput = document.getElementById('rows');
+        const colsInput = document.getElementById('cols');
+        const blockCountInput = document.getElementById('blockCount');
+
+        rowsInput.addEventListener('change', saveConfigToCookie);
+        colsInput.addEventListener('change', saveConfigToCookie);
+        blockCountInput.addEventListener('change', saveConfigToCookie);
     }
 
     // 开关提示：打开时从当前局面计算一条可行解
@@ -771,6 +806,8 @@
         return dfs(startGrid, []);
     }
 
+    loadConfigFromCookie();
+    setupConfigPersistence();
     initializeGame();
     showWelcomeIfFirstVisit();
 </script>
