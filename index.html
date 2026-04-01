@@ -226,13 +226,28 @@
         remainingRed = blockCount;
 
         if (reset) {
-            bluePositions = getConnectedCenterPositions(blockCount);
+            const maxAttempts = 200;
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                bluePositions = getConnectedCenterPositions(blockCount);
+                redPositions = getValidRedPositions(bluePositions);
+                if (
+                    bluePositions.length === blockCount &&
+                    redPositions.length === blockCount &&
+                    bluePositions.length === redPositions.length
+                ) {
+                    break;
+                }
+            }
+            if (
+                bluePositions.length !== blockCount ||
+                redPositions.length !== blockCount ||
+                bluePositions.length !== redPositions.length
+            ) {
+                throw new Error('无法在有限次尝试内生成与方块数一致的蓝块与红块');
+            }
         }
         bluePositions.forEach(({ x, y }) => grid[y][x] = 'blue');
 
-        if (reset) {
-            redPositions = getValidRedPositions(bluePositions);
-        }
         redNumbers = Array.from({ length: blockCount }, (_, i) => i + 1);
         redPositions.forEach(pos => grid[pos.y][pos.x] = 'red');
 
